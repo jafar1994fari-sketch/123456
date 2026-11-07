@@ -2,36 +2,32 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bnet TV Management</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;font-family:Arial,sans-serif;background:#f3f5f9;color:#202b3c}
+body{margin:0;font-family:Arial;background:#f3f5f9;color:#202b3c}
 .layout{display:flex;min-height:100vh}
 .sidebar{width:230px;background:#142238;color:white;padding:25px 18px}
 .logo{font-size:22px;font-weight:bold;margin-bottom:40px}
 .menu{padding:13px;margin:8px 0;border-radius:8px;color:#cbd5e1}
 .menu.active{background:#24446b;color:white}
 .main{flex:1;padding:30px}
-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:25px}
 h1{font-size:26px;margin:0}
 .muted{color:#78869a;font-size:14px}
 .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:25px}
-.card,.panel{background:white;border-radius:12px;padding:22px;box-shadow:0 2px 10px #1522380a}
+.card,.panel{background:white;border-radius:12px;padding:22px;margin-bottom:20px}
 .number{font-size:30px;font-weight:bold;margin-top:12px}
-.panel{overflow:auto}
-table{width:100%;border-collapse:collapse;margin-top:15px;min-width:550px}
-th,td{text-align:left;padding:15px;border-bottom:1px solid #edf0f4;font-size:14px}
+button{background:#1769aa;color:white;border:0;padding:11px 17px;border-radius:7px;cursor:pointer}
+input{width:100%;padding:12px;border:1px solid #dce2eb;border-radius:7px;margin:7px 0 15px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+table{width:100%;border-collapse:collapse;margin-top:15px;min-width:650px}
+th,td{text-align:left;padding:14px;border-bottom:1px solid #edf0f4;font-size:14px}
 th{color:#78869a}
-.status{color:#b7791f;background:#fff4d6;padding:6px 10px;border-radius:20px;font-size:12px}
-button{background:#1769aa;color:white;border:0;padding:10px 16px;border-radius:7px;cursor:pointer}
-@media(max-width:700px){
-.sidebar{width:65px;padding:15px 8px}
-.logo{font-size:12px;overflow:hidden}
-.menu{font-size:11px;padding:10px 3px}
-.main{padding:18px}
-.cards{grid-template-columns:1fr}
-}
+.status{background:#fff4d6;color:#946200;padding:6px 10px;border-radius:20px;font-size:12px}
+.table-wrap{overflow:auto}
+@media(max-width:700px){.sidebar{width:65px;padding:15px 8px}.logo{font-size:12px}.menu{font-size:11px;padding:10px 3px}.main{padding:15px}.cards{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -55,43 +51,83 @@ button{background:#1769aa;color:white;border:0;padding:10px 16px;border-radius:7
 </header>
 
 <section class="cards">
-<div class="card">
-<div class="muted">Total Devices</div>
-<div class="number">0</div>
+<div class="card"><div class="muted">Total Devices</div><div class="number" id="total">0</div></div>
+<div class="card"><div class="muted">Online Devices</div><div class="number">0</div></div>
+<div class="card"><div class="muted">Offline Devices</div><div class="number" id="offline">0</div></div>
+</section>
+
+<section class="panel">
+<h3>Add New Device</h3>
+<form id="deviceForm">
+<div class="form-grid">
+<div><label>Device Name</label><input id="name" placeholder="Living Room TV" required></div>
+<div><label>Subscriber Name</label><input id="subscriber" placeholder="Subscriber name"></div>
+<div><label>Model</label><input id="model" placeholder="VECHO PRO"></div>
+<div><label>Serial Number</label><input id="serial" placeholder="Device serial number" required></div>
+<div><label>IP Address</label><input id="ip" placeholder="192.168.1.3"></div>
 </div>
-<div class="card">
-<div class="muted">Online Devices</div>
-<div class="number">0</div>
-</div>
-<div class="card">
-<div class="muted">Offline Devices</div>
-<div class="number">0</div>
-</div>
+<button type="submit">Add Device</button>
+</form>
 </section>
 
 <section class="panel">
 <h3>Registered Devices</h3>
-<p class="muted">Your Android TV devices will appear here.</p>
+<div class="table-wrap">
 <table>
-<thead>
-<tr>
-<th>Device Name</th>
-<th>IP Address</th>
-<th>Status</th>
-<th>Action</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>No devices registered</td>
-<td>—</td>
-<td><span class="status">Waiting</span></td>
-<td>—</td>
-</tr>
-</tbody>
+<thead><tr><th>Device Name</th><th>Subscriber</th><th>Model</th><th>Serial</th><th>IP Address</th><th>Status</th></tr></thead>
+<tbody id="deviceList"><tr><td colspan="6">No devices registered</td></tr></tbody>
 </table>
+</div>
 </section>
 </main>
 </div>
+
+<script>
+const form=document.getElementById("deviceForm");
+const list=document.getElementById("deviceList");
+let devices=JSON.parse(localStorage.getItem("bnetDevices")||"[]");
+
+function render(){
+document.getElementById("total").textContent=devices.length;
+document.getElementById("offline").textContent=devices.length;
+list.innerHTML="";
+if(!devices.length){
+list.innerHTML='<tr><td colspan="6">No devices registered</td></tr>';
+return;
+}
+devices.forEach(d=>{
+const row=document.createElement("tr");
+[d.name,d.subscriber,d.model,d.serial,d.ip].forEach(value=>{
+const cell=document.createElement("td");
+cell.textContent=value||"-";
+row.appendChild(cell);
+});
+const status=document.createElement("td");
+status.innerHTML='<span class="status">Offline</span>';
+row.appendChild(status);
+list.appendChild(row);
+});
+}
+
+form.addEventListener("submit",e=>{
+e.preventDefault();
+const device={
+name:document.getElementById("name").value,
+subscriber:document.getElementById("subscriber").value,
+model:document.getElementById("model").value,
+serial:document.getElementById("serial").value,
+ip:document.getElementById("ip").value
+};
+if(devices.some(d=>d.serial===device.serial)){
+alert("This serial number already exists");
+return;
+}
+devices.push(device);
+localStorage.setItem("bnetDevices",JSON.stringify(devices));
+form.reset();
+render();
+});
+render();
+</script>
 </body>
 </html>
