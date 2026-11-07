@@ -3,14 +3,16 @@ const express = require("express");
 const path = require("path");
 const http = require("http");
 const WebSocket = require("ws");
+const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
 
 const PORT = process.env.PORT || 3000;
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
+const TEST_CONTROL_TOKEN = process.env.TEST_CONTROL_TOKEN;
 
-app.use(express.json());
+app.use(express.json({ limit: "10kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 let gatewaySocket = null;
@@ -18,6 +20,7 @@ let connectedAt = null;
 let lastSeen = null;
 
 const devices = new Map();
+const pendingRequests = new Map();
 
 app.get("/api/status", (req, res) => {
     res.json({
@@ -39,33 +42,170 @@ app.get("/api/devices", (req, res) => {
     res.json(Array.from(devices.values()));
 });
 
+// Temporary test access protection.
+function checkTestAccess(req, res, next) {
+    const supplied = req.headers["x-test-token"];
+
+    if (!TEST_CONTROL_TOKEN || !supplied) {
+        return res.status(401).json({
+            error: "Test access is not configured"
+        });
+    }
+
+    const a = Buffer.from(String(supplied));
+    const b = Buffer.from(TEST_CONTROL_TOKEN);
+
+    if (a.length !== b.length ||
+        !crypto.timingSafeEqual(a, b)) {
+        return res.status(403).json({
+            error: "Invalid test access token"
+        });
+    }
+
+    next();
+}
+
+// Send a request through the existing Gateway connection.
+function sendGatewayRequest(type, payload = {}) {
+    return new Promise((resolve, reject) => {
+        if (!gatewaySocket ||
+            gatewaySocket.readyState !== WebSocket.OPEN) {
+            return reject(new Error("Gateway is disconnected"));
+        }
+
+        const requestId = crypto.randomUUID();
+
+        const timer = setTimeout(() => {
+            pendingRequests.delete(requestId);
+            reject(new Error("Gateway request timed out"));
+        }, 15000);
+
+        pendingRequests.set(requestId, {
+            resolve,
+            reject,
+            timer
+        });
+
+        gatewaySocket.send(JSON.stringify({
+            type,
+            requestId,
+            ...payload
+        }), error => {
+            if (error) {
+                clearTimeout(timer);
+                pendingRequests.delete(requestId);
+                reject(error);
+            }
+        });
+    });
+}
+
+// Request a screenshot from the test TV.
+app.get("/api/test/screenshot",
+    checkTestAccess,
+    async (req, res) => {
+        try {
+            const result = await sendGatewayRequest(
+                "device_screenshot"
+            );
+
+            if (!result.image) {
+                throw new Error("Empty screenshot");
+            }
+
+            const image = Buffer.from(result.image, "base64");
+
+            res.set({
+                "Content-Type": "image/png",
+                "Cache-Control": "no-store"
+            });
+
+            res.send(image);
+
+        } catch (error) {
+            res.status(503).json({
+                error: error.message
+            });
+        }
+    }
+);
+
+// Allow only specific remote-control actions.
+app.post("/api/test/command",
+    checkTestAccess,
+    async (req, res) => {
+        const { action, x, y } = req.body || {};
+
+        const allowedKeys = [
+            "BACK", "HOME", "DPAD_UP", "DPAD_DOWN",
+            "DPAD_LEFT", "DPAD_RIGHT", "DPAD_CENTER",
+            "ENTER", "MENU", "VOLUME_UP", "VOLUME_DOWN"
+        ];
+
+        let command = {};
+
+        if (action === "tap") {
+            if (!Number.isInteger(x) ||
+                !Number.isInteger(y) ||
+                x < 0 || x >= 1280 ||
+                y < 0 || y >= 720) {
+                return res.status(400).json({
+                    error: "Invalid coordinates"
+                });
+            }
+
+            command = { action, x, y };
+
+        } else if (allowedKeys.includes(action)) {
+            command = { action };
+
+        } else {
+            return res.status(400).json({
+                error: "Unsupported action"
+            });
+        }
+
+        try {
+            const result = await sendGatewayRequest(
+                "device_command",
+                command
+            );
+
+            res.json({
+                success: true,
+                result: result.message || "Command completed"
+            });
+
+        } catch (error) {
+            res.status(503).json({
+                error: error.message
+            });
+        }
+    }
+);
+
 const wss = new WebSocket.Server({ noServer: true });
 
 server.on("upgrade", (request, socket, head) => {
-    if (request.url !== "/gateway") {
+    if (request.url !== "/gateway" || !GATEWAY_TOKEN) {
         socket.destroy();
         return;
     }
 
-    if (!GATEWAY_TOKEN) {
+    if (request.headers.authorization !==
+        `Bearer ${GATEWAY_TOKEN}`) {
         socket.destroy();
         return;
     }
 
-    const auth = request.headers.authorization;
-
-    if (auth !== `Bearer ${GATEWAY_TOKEN}`) {
-        socket.destroy();
-        return;
-    }
-
-    wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.handleUpgrade(request, socket, head, ws => {
         wss.emit("connection", ws, request);
     });
 });
 
-wss.on("connection", (ws) => {
-    if (gatewaySocket && gatewaySocket.readyState === WebSocket.OPEN) {
+wss.on("connection", ws => {
+    if (gatewaySocket &&
+        gatewaySocket.readyState === WebSocket.OPEN) {
         gatewaySocket.close();
     }
 
@@ -82,7 +222,7 @@ wss.on("connection", (ws) => {
         lastSeen = new Date().toISOString();
     });
 
-    ws.on("message", (message) => {
+    ws.on("message", message => {
         lastSeen = new Date().toISOString();
 
         try {
@@ -92,12 +232,7 @@ wss.on("connection", (ws) => {
                 console.log("Gateway registered");
             }
 
-            if (data.type === "device_update") {
-                if (!data.serial) {
-                    console.log("Device update rejected: missing serial");
-                    return;
-                }
-
+            if (data.type === "device_update" && data.serial) {
                 devices.set(data.serial, {
                     serial: data.serial,
                     model: data.model || "Unknown",
@@ -106,8 +241,26 @@ wss.on("connection", (ws) => {
                     status: "Online",
                     lastSeen: new Date().toISOString()
                 });
+            }
 
-                console.log("Device updated:", data.model || data.serial);
+            if (
+                data.type === "screenshot_result" ||
+                data.type === "command_result"
+            ) {
+                const pending = pendingRequests.get(data.requestId);
+
+                if (pending) {
+                    clearTimeout(pending.timer);
+                    pendingRequests.delete(data.requestId);
+
+                    if (data.success) {
+                        pending.resolve(data);
+                    } else {
+                        pending.reject(
+                            new Error(data.error || "Device command failed")
+                        );
+                    }
+                }
             }
 
         } catch {
@@ -127,10 +280,16 @@ wss.on("connection", (ws) => {
                     status: "Offline"
                 });
             }
+
+            for (const [id, pending] of pendingRequests) {
+                clearTimeout(pending.timer);
+                pending.reject(new Error("Gateway disconnected"));
+                pendingRequests.delete(id);
+            }
         }
     });
 
-    ws.on("error", (err) => {
+    ws.on("error", err => {
         console.log("Gateway WebSocket error:", err.message);
     });
 });
