@@ -16,20 +16,27 @@ app.use(express.static(path.join(__dirname, "public")));
 let gatewaySocket = null;
 let connectedAt = null;
 let lastSeen = null;
-let gatewayDevice = null;
+
+const devices = new Map();
 
 app.get("/api/status", (req, res) => {
     res.json({
         system: "Bnet TV Management",
         status: "Online",
-        gateway: gatewaySocket &&
+        gateway:
+            gatewaySocket &&
             gatewaySocket.readyState === WebSocket.OPEN
                 ? "Connected"
                 : "Disconnected",
         connectedAt,
         lastSeen,
-        device: gatewayDevice
+        deviceCount: devices.size,
+        devices: Array.from(devices.values())
     });
+});
+
+app.get("/api/devices", (req, res) => {
+    res.json(Array.from(devices.values()));
 });
 
 const wss = new WebSocket.Server({ noServer: true });
@@ -65,7 +72,6 @@ wss.on("connection", (ws) => {
     gatewaySocket = ws;
     connectedAt = new Date().toISOString();
     lastSeen = connectedAt;
-    gatewayDevice = null;
 
     ws.isAlive = true;
 
@@ -83,9 +89,27 @@ wss.on("connection", (ws) => {
             const data = JSON.parse(message.toString());
 
             if (data.type === "gateway_connected") {
-                gatewayDevice = data.device || "Unknown";
-                console.log("Gateway device registered");
+                console.log("Gateway registered");
             }
+
+            if (data.type === "device_update") {
+                if (!data.serial) {
+                    console.log("Device update rejected: missing serial");
+                    return;
+                }
+
+                devices.set(data.serial, {
+                    serial: data.serial,
+                    model: data.model || "Unknown",
+                    android: data.android || "Unknown",
+                    adbAddress: data.adbAddress || null,
+                    status: "Online",
+                    lastSeen: new Date().toISOString()
+                });
+
+                console.log("Device updated:", data.model || data.serial);
+            }
+
         } catch {
             console.log("Invalid Gateway message received");
         }
@@ -96,7 +120,13 @@ wss.on("connection", (ws) => {
 
         if (gatewaySocket === ws) {
             gatewaySocket = null;
-            gatewayDevice = null;
+
+            for (const [serial, device] of devices) {
+                devices.set(serial, {
+                    ...device,
+                    status: "Offline"
+                });
+            }
         }
     });
 
@@ -105,7 +135,6 @@ wss.on("connection", (ws) => {
     });
 });
 
-// Check the Gateway connection every 30 seconds.
 const heartbeat = setInterval(() => {
     if (!gatewaySocket) return;
 
