@@ -1,16 +1,12 @@
 const express = require("express");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send(`
-    <h1>Bnet TV Management</h1>
-    <p>Server is running successfully!</p>
-  `);
-});
+app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/status", (req, res) => {
   res.json({
@@ -20,5 +16,5 @@ app.get("/api/status", (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("Bnet TV Management is running");
 });
