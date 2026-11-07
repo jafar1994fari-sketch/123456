@@ -110,7 +110,7 @@ table{
     width:100%;
     border-collapse:collapse;
     margin-top:15px;
-    min-width:650px
+    min-width:850px
 }
 
 th,td{
@@ -205,7 +205,7 @@ th{color:#78869a}
         <p class="muted">Android TV Management System</p>
     </div>
 
-    <button onclick="updateGatewayStatus()">Refresh</button>
+    <button onclick="refreshDashboard()">Refresh</button>
 </header>
 
 <section class="cards">
@@ -217,7 +217,7 @@ th{color:#78869a}
 
     <div class="card">
         <div class="muted">Online Devices</div>
-        <div class="number">0</div>
+        <div class="number" id="online">0</div>
     </div>
 
     <div class="card">
@@ -248,30 +248,22 @@ th{color:#78869a}
 
         <div>
             <div class="muted">Connected Device</div>
-            <div class="gateway-value" id="gatewayDevice">
-                -
-            </div>
+            <div class="gateway-value" id="gatewayDevice">-</div>
         </div>
 
         <div>
             <div class="muted">Connected Since</div>
-            <div class="gateway-value" id="connectedAt">
-                -
-            </div>
+            <div class="gateway-value" id="connectedAt">-</div>
         </div>
 
         <div>
             <div class="muted">Last Seen</div>
-            <div class="gateway-value" id="lastSeen">
-                -
-            </div>
+            <div class="gateway-value" id="lastSeen">-</div>
         </div>
 
         <div>
             <div class="muted">Last Status Check</div>
-            <div class="gateway-value" id="lastCheck">
-                -
-            </div>
+            <div class="gateway-value" id="lastCheck">-</div>
         </div>
 
     </div>
@@ -323,6 +315,10 @@ th{color:#78869a}
 
     <h3>Registered Devices</h3>
 
+    <p class="muted" id="deviceMessage">
+        Loading devices...
+    </p>
+
     <div class="table-wrap">
 
         <table>
@@ -332,7 +328,8 @@ th{color:#78869a}
                     <th>Device Name</th>
                     <th>Subscriber</th>
                     <th>Model</th>
-                    <th>Serial</th>
+                    <th>Android</th>
+                    <th>Serial / Device ID</th>
                     <th>IP Address</th>
                     <th>Status</th>
                 </tr>
@@ -340,7 +337,7 @@ th{color:#78869a}
 
             <tbody id="deviceList">
                 <tr>
-                    <td colspan="6">No devices registered</td>
+                    <td colspan="7">Loading devices...</td>
                 </tr>
             </tbody>
 
@@ -358,9 +355,11 @@ th{color:#78869a}
 const form = document.getElementById("deviceForm");
 const list = document.getElementById("deviceList");
 
-let devices = JSON.parse(
+let manualDevices = JSON.parse(
     localStorage.getItem("bnetDevices") || "[]"
 );
+
+let cloudDevices = [];
 
 function formatDate(value) {
     if (!value) return "-";
@@ -372,72 +371,136 @@ function formatDate(value) {
     return date.toLocaleString();
 }
 
-function render() {
+function createCell(row, value) {
+    const cell = document.createElement("td");
+    cell.textContent = value || "-";
+    row.appendChild(cell);
+}
+
+function renderDevices() {
+
+    const allDevices = new Map();
+
+    manualDevices.forEach(device => {
+        if (device.serial) {
+            allDevices.set(device.serial, {
+                ...device,
+                status: "Offline",
+                source: "Manual"
+            });
+        }
+    });
+
+    cloudDevices.forEach(device => {
+
+        const existing = allDevices.get(device.serial) || {};
+
+        allDevices.set(device.serial, {
+            ...existing,
+            ...device,
+            name: existing.name || device.model || "Android TV",
+            subscriber: existing.subscriber || "",
+            status: device.status || "Offline",
+            source: "Cloud"
+        });
+
+    });
+
+    const devices = Array.from(allDevices.values());
+
+    const onlineCount = devices.filter(
+        device => device.status === "Online"
+    ).length;
+
+    const offlineCount = devices.length - onlineCount;
 
     document.getElementById("total").textContent =
         devices.length;
 
+    document.getElementById("online").textContent =
+        onlineCount;
+
     document.getElementById("offline").textContent =
-        devices.length;
+        offlineCount;
 
     list.innerHTML = "";
 
     if (!devices.length) {
         list.innerHTML =
-            '<tr><td colspan="6">No devices registered</td></tr>';
+            '<tr><td colspan="7">No devices registered</td></tr>';
         return;
     }
 
-    devices.forEach(d => {
+    devices.forEach(device => {
 
         const row = document.createElement("tr");
 
-        [d.name, d.subscriber, d.model, d.serial, d.ip]
-        .forEach(value => {
+        createCell(row, device.name);
+        createCell(row, device.subscriber);
+        createCell(row, device.model);
+        createCell(row, device.android);
 
-            const cell = document.createElement("td");
-            cell.textContent = value || "-";
-            row.appendChild(cell);
+        createCell(row, device.serial);
 
-        });
+        const ip = device.adbAddress
+            ? device.adbAddress.split(":")[0]
+            : device.ip;
 
-        const status = document.createElement("td");
+        createCell(row, ip);
 
-        status.innerHTML =
-            '<span class="status">Offline</span>';
+        const statusCell = document.createElement("td");
+        const badge = document.createElement("span");
 
-        row.appendChild(status);
+        badge.className =
+            device.status === "Online"
+                ? "status online"
+                : "status offline";
+
+        badge.textContent = device.status || "Offline";
+
+        statusCell.appendChild(badge);
+        row.appendChild(statusCell);
+
         list.appendChild(row);
 
     });
+
+    document.getElementById("deviceMessage").textContent =
+        "Last updated: " + new Date().toLocaleTimeString();
+
 }
 
-form.addEventListener("submit", e => {
+form.addEventListener("submit", event => {
 
-    e.preventDefault();
+    event.preventDefault();
 
     const device = {
-        name: document.getElementById("name").value,
-        subscriber: document.getElementById("subscriber").value,
-        model: document.getElementById("model").value,
-        serial: document.getElementById("serial").value,
-        ip: document.getElementById("ip").value
+        name: document.getElementById("name").value.trim(),
+        subscriber: document.getElementById("subscriber").value.trim(),
+        model: document.getElementById("model").value.trim(),
+        serial: document.getElementById("serial").value.trim(),
+        ip: document.getElementById("ip").value.trim()
     };
 
-    if (devices.some(d => d.serial === device.serial)) {
+    const exists = manualDevices.some(
+        item => item.serial === device.serial
+    );
+
+    if (exists) {
         alert("This serial number already exists");
         return;
     }
 
-    devices.push(device);
+    manualDevices.push(device);
 
     localStorage.setItem(
         "bnetDevices",
-        JSON.stringify(devices)
+        JSON.stringify(manualDevices)
     );
 
     form.reset();
-    render();
+
+    renderDevices();
 
 });
 
@@ -487,6 +550,7 @@ async function updateGatewayStatus() {
         document.getElementById("gatewayDevice").textContent = "-";
         document.getElementById("lastSeen").textContent = "-";
         document.getElementById("connectedAt").textContent = "-";
+
         document.getElementById("lastCheck").textContent =
             new Date().toLocaleTimeString();
 
@@ -494,11 +558,44 @@ async function updateGatewayStatus() {
 
 }
 
-render();
+async function updateDevices() {
 
-updateGatewayStatus();
+    try {
 
-setInterval(updateGatewayStatus, 5000);
+        const response = await fetch(
+            "/api/devices?t=" + Date.now(),
+            { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+            throw new Error("Could not load devices");
+        }
+
+        cloudDevices = await response.json();
+
+        renderDevices();
+
+    } catch (error) {
+
+        document.getElementById("deviceMessage").textContent =
+            "Unable to load cloud devices. Please check connection.";
+
+    }
+
+}
+
+async function refreshDashboard() {
+
+    await Promise.all([
+        updateGatewayStatus(),
+        updateDevices()
+    ]);
+
+}
+
+refreshDashboard();
+
+setInterval(refreshDashboard, 5000);
 
 </script>
 
