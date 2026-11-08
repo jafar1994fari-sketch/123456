@@ -11,7 +11,7 @@
 
 body{
     margin:0;
-    font-family:Arial;
+    font-family:Arial,sans-serif;
     background:#f3f5f9;
     color:#202b3c
 }
@@ -22,7 +22,8 @@ body{
     width:230px;
     background:#142238;
     color:white;
-    padding:25px 18px
+    padding:25px 18px;
+    flex-shrink:0
 }
 
 .logo{
@@ -58,6 +59,8 @@ header{
 
 h1{font-size:26px;margin:0}
 
+h3{margin-top:0}
+
 .muted{
     color:#78869a;
     font-size:14px
@@ -89,7 +92,15 @@ button{
     border:0;
     padding:11px 17px;
     border-radius:7px;
-    cursor:pointer
+    cursor:pointer;
+    font-size:14px
+}
+
+button:hover{background:#12558b}
+
+button:disabled{
+    opacity:.5;
+    cursor:not-allowed
 }
 
 input{
@@ -156,6 +167,68 @@ th{color:#78869a}
 
 .table-wrap{overflow:auto}
 
+/* Remote Control */
+
+.remote-top{
+    display:grid;
+    grid-template-columns:minmax(200px,1fr) auto;
+    gap:12px;
+    align-items:end
+}
+
+.remote-top input{margin-bottom:0}
+
+.remote-status{
+    margin-top:15px;
+    padding:12px;
+    background:#f3f5f9;
+    border-radius:8px;
+    color:#526176;
+    font-size:14px
+}
+
+.remote-screen-wrap{
+    margin-top:20px;
+    background:#0b1120;
+    border-radius:10px;
+    padding:10px;
+    text-align:center
+}
+
+#remoteScreen{
+    display:block;
+    width:100%;
+    max-width:1280px;
+    height:auto;
+    margin:auto;
+    background:#000;
+    cursor:crosshair;
+    border-radius:6px
+}
+
+.remote-controls{
+    text-align:center;
+    margin-top:18px
+}
+
+.remote-controls button{
+    min-width:75px;
+    margin:5px;
+    padding:13px 18px;
+    font-weight:bold
+}
+
+.remote-controls .direction{
+    min-width:65px;
+    font-size:20px
+}
+
+.remote-note{
+    font-size:12px;
+    color:#78869a;
+    margin-top:12px
+}
+
 @media(max-width:900px){
     .cards,.gateway-grid{
         grid-template-columns:1fr 1fr
@@ -177,8 +250,15 @@ th{color:#78869a}
 
     .main{padding:15px}
 
-    .cards,.gateway-grid,.form-grid{
+    .cards,.gateway-grid,.form-grid,.remote-top{
         grid-template-columns:1fr
+    }
+
+    header{gap:10px}
+
+    .remote-controls button{
+        min-width:60px;
+        padding:11px
     }
 }
 </style>
@@ -265,6 +345,87 @@ th{color:#78869a}
             <div class="muted">Last Status Check</div>
             <div class="gateway-value" id="lastCheck">-</div>
         </div>
+
+    </div>
+
+</section>
+
+<!-- Remote Device Control -->
+
+<section class="panel">
+
+    <h3>Remote Device Control</h3>
+
+    <p class="muted">
+        Secure remote screen viewing and control through NOC Gateway
+    </p>
+
+    <div class="remote-top">
+
+        <div>
+            <label for="testToken">Test Access Token</label>
+            <input
+                id="testToken"
+                type="password"
+                placeholder="Enter TEST_CONTROL_TOKEN"
+                autocomplete="off"
+            >
+        </div>
+
+        <button id="connectRemoteBtn" onclick="connectRemote()">
+            Connect to Device
+        </button>
+
+    </div>
+
+    <div class="remote-status" id="remoteStatus">
+        Enter your test access token to start remote control.
+    </div>
+
+    <div class="remote-screen-wrap">
+
+        <img
+            id="remoteScreen"
+            alt="Remote TV Screen"
+            style="display:none"
+        >
+
+        <div id="screenPlaceholder" style="color:#cbd5e1;padding:60px 10px">
+            TV screen will appear here after connection.
+        </div>
+
+    </div>
+
+    <div class="remote-controls">
+
+        <div>
+            <button onclick="sendRemoteCommand('HOME')" disabled class="remoteAction">Home</button>
+            <button onclick="sendRemoteCommand('BACK')" disabled class="remoteAction">Back</button>
+            <button onclick="sendRemoteCommand('MENU')" disabled class="remoteAction">Menu</button>
+        </div>
+
+        <div>
+            <button class="direction remoteAction" onclick="sendRemoteCommand('DPAD_UP')" disabled>▲</button>
+        </div>
+
+        <div>
+            <button class="direction remoteAction" onclick="sendRemoteCommand('DPAD_LEFT')" disabled>◀</button>
+            <button class="direction remoteAction" onclick="sendRemoteCommand('DPAD_CENTER')" disabled>OK</button>
+            <button class="direction remoteAction" onclick="sendRemoteCommand('DPAD_RIGHT')" disabled>▶</button>
+        </div>
+
+        <div>
+            <button class="direction remoteAction" onclick="sendRemoteCommand('DPAD_DOWN')" disabled>▼</button>
+        </div>
+
+        <div>
+            <button onclick="sendRemoteCommand('VOLUME_UP')" disabled class="remoteAction">Volume +</button>
+            <button onclick="sendRemoteCommand('VOLUME_DOWN')" disabled class="remoteAction">Volume -</button>
+        </div>
+
+        <p class="remote-note">
+            Click directly on the TV screen to select an item.
+        </p>
 
     </div>
 
@@ -361,6 +522,13 @@ let manualDevices = JSON.parse(
 
 let cloudDevices = [];
 
+// Remote control state
+let testToken = "";
+let remoteConnected = false;
+let screenshotTimer = null;
+let screenshotLoading = false;
+let currentImageUrl = null;
+
 function formatDate(value) {
     if (!value) return "-";
 
@@ -439,7 +607,6 @@ function renderDevices() {
         createCell(row, device.subscriber);
         createCell(row, device.model);
         createCell(row, device.android);
-
         createCell(row, device.serial);
 
         const ip = device.adbAddress
@@ -592,6 +759,250 @@ async function refreshDashboard() {
     ]);
 
 }
+
+// Remote control functions
+
+function setRemoteStatus(message) {
+    document.getElementById("remoteStatus").textContent = message;
+}
+
+function setRemoteControls(enabled) {
+    document.querySelectorAll(".remoteAction").forEach(button => {
+        button.disabled = !enabled;
+    });
+}
+
+function stopScreenshotRefresh() {
+    if (screenshotTimer) {
+        clearInterval(screenshotTimer);
+        screenshotTimer = null;
+    }
+
+    screenshotLoading = false;
+}
+
+function clearRemoteScreen() {
+    const screen = document.getElementById("remoteScreen");
+
+    screen.removeAttribute("src");
+    screen.style.display = "none";
+
+    document.getElementById("screenPlaceholder").style.display = "block";
+
+    if (currentImageUrl) {
+        URL.revokeObjectURL(currentImageUrl);
+        currentImageUrl = null;
+    }
+}
+
+function disconnectRemote() {
+    remoteConnected = false;
+    testToken = "";
+
+    stopScreenshotRefresh();
+    setRemoteControls(false);
+    clearRemoteScreen();
+
+    document.getElementById("testToken").value = "";
+}
+
+async function connectRemote() {
+
+    const tokenInput = document.getElementById("testToken");
+    const enteredToken = tokenInput.value.trim();
+
+    if (!enteredToken) {
+        setRemoteStatus("Please enter the test access token.");
+        return;
+    }
+
+    testToken = enteredToken;
+
+    setRemoteStatus("Checking access and connecting to TV...");
+    document.getElementById("connectRemoteBtn").disabled = true;
+
+    try {
+
+        const response = await fetch("/api/test/screenshot", {
+            method: "GET",
+            headers: {
+                "x-test-token": testToken
+            },
+            cache: "no-store"
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || "Connection failed");
+        }
+
+        remoteConnected = true;
+        setRemoteControls(true);
+
+        await displayScreenshotResponse(response);
+
+        setRemoteStatus("Connected. Remote TV is ready.");
+
+        stopScreenshotRefresh();
+
+        screenshotTimer = setInterval(
+            refreshRemoteScreen,
+            3000
+        );
+
+    } catch (error) {
+
+        disconnectRemote();
+
+        setRemoteStatus(
+            "Connection failed: " + error.message
+        );
+
+    } finally {
+
+        document.getElementById("connectRemoteBtn").disabled = false;
+
+    }
+
+}
+
+async function displayScreenshotResponse(response) {
+
+    const blob = await response.blob();
+
+    if (!blob.size) {
+        throw new Error("Empty screenshot received");
+    }
+
+    const newImageUrl = URL.createObjectURL(blob);
+
+    const screen = document.getElementById("remoteScreen");
+
+    screen.onload = () => {
+        if (currentImageUrl && currentImageUrl !== newImageUrl) {
+            URL.revokeObjectURL(currentImageUrl);
+        }
+
+        currentImageUrl = newImageUrl;
+
+        screen.style.display = "block";
+
+        document.getElementById("screenPlaceholder").style.display =
+            "none";
+    };
+
+    screen.onerror = () => {
+        URL.revokeObjectURL(newImageUrl);
+        setRemoteStatus("Unable to display TV screenshot.");
+    };
+
+    screen.src = newImageUrl;
+}
+
+async function refreshRemoteScreen() {
+
+    if (!remoteConnected || screenshotLoading) return;
+
+    screenshotLoading = true;
+
+    try {
+
+        const response = await fetch("/api/test/screenshot", {
+            method: "GET",
+            headers: {
+                "x-test-token": testToken
+            },
+            cache: "no-store"
+        });
+
+        if (!response.ok) {
+            throw new Error("Screenshot request failed");
+        }
+
+        await displayScreenshotResponse(response);
+
+    } catch (error) {
+
+        setRemoteStatus(
+            "Screen update failed: " + error.message
+        );
+
+    } finally {
+
+        screenshotLoading = false;
+
+    }
+
+}
+
+async function sendRemoteCommand(action, x, y) {
+
+    if (!remoteConnected || !testToken) {
+        setRemoteStatus("Connect to the device first.");
+        return;
+    }
+
+    const body = { action };
+
+    if (action === "tap") {
+        body.x = x;
+        body.y = y;
+    }
+
+    try {
+
+        const response = await fetch("/api/test/command", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "x-test-token": testToken
+            },
+            body: JSON.stringify(body)
+        });
+
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(result.error || "Command failed");
+        }
+
+        setRemoteStatus("Command completed: " + action);
+
+    } catch (error) {
+
+        setRemoteStatus(
+            "Command failed: " + error.message
+        );
+
+    }
+
+}
+
+// Click on TV screen to send a tap command
+document.getElementById("remoteScreen").addEventListener("click", event => {
+
+    if (!remoteConnected) return;
+
+    const screen = event.currentTarget;
+    const rect = screen.getBoundingClientRect();
+
+    const x = Math.round(
+        (event.clientX - rect.left) * 1280 / rect.width
+    );
+
+    const y = Math.round(
+        (event.clientY - rect.top) * 720 / rect.height
+    );
+
+    sendRemoteCommand("tap", x, y);
+
+});
+
+document.getElementById("testToken").addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+        connectRemote();
+    }
+});
 
 refreshDashboard();
 
